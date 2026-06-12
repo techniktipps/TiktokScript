@@ -31,17 +31,15 @@ jobs:
           # TikTok Config
           TIKTOK_USERNAME: ${{ secrets.TIKTOK_USERNAME }}
           
-          # Supabase Config
+          # Supabase Config (Reiner Duplikatschutz, kein Bucket mehr nötig)
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          SUPABASE_BUCKET_NAME: ${{ secrets.SUPABASE_BUCKET_NAME }}
           
           # YouTube API Config
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           
-          # Instagram API Config
-          INSTAGRAM_BUSINESS_ACCOUNT_ID: ${{ secrets.INSTAGRAM_BUSINESS_ACCOUNT_ID }}
-          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+          # Instagram Config (Neu über den cleveren Session-Trick)
+          INSTAGRAM_SESSION: ${{ secrets.INSTAGRAM_SESSION }}
         run: python main.py
