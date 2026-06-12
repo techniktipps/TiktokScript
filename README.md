@@ -1,6 +1,8 @@
-# 🤖 TikTok Cross-Poster Automation
+# 🤖 TikTok Cross-Poster Automation (instagrapi Edition)
 
-Ein vollautomatisches, produktionsbereites und modulares Python-Skript, das Kurzvideos (TikToks) wasserzeichenfrei herunterlädt und auf **YouTube Shorts** sowie **Instagram Reels** cross-postet. Das Tool läuft komplett kostenlos und serverlos über **GitHub Actions** (per Cronjob gesteuert) und nutzt **Supabase** als zustandsloses Backend für Duplikatschutz (PostgreSQL) und temporäre Videohosting-Zwecke (Storage).
+Ein vollautomatisches, produktionsbereites und modulares Python-Skript, das Kurzvideos (TikToks) wasserzeichenfrei herunterlädt und auf **YouTube Shorts** sowie **Instagram Reels** cross-postet. Das Tool läuft komplett kostenlos und serverlos über **GitHub Actions** (per Cronjob gesteuert) und nutzt **Supabase** als zustandsloses Backend für Duplikatschutz (PostgreSQL).
+
+Für Instagram nutzen wir die inoffizielle API-Bibliothek `instagrapi` mit dem **Session-Trick**. Dadurch umgehen wir jegliche Facebook-Bürokratie und lösen das Problem der Zwei-Faktor-Authentifizierung (2FA) elegant.
 
 ---
 
@@ -8,11 +10,11 @@ Ein vollautomatisches, produktionsbereites und modulares Python-Skript, das Kurz
 
 - **Automatischer Cronjob:** Läuft alle 30 Minuten vollautomatisch via GitHub Actions.
 - **Duplikatschutz:** PostgreSQL-Datenbank (Supabase) stellt sicher, dass kein Video doppelt gepostet wird.
-- **Wasserzeichen-Entfernung:** Lädt TikToks ohne Wasserzeichen über die TikWM-API herunter.
-- **Instagram Reels Integration:** Lädt Videos temporär in Supabase Storage hoch, um eine öffentliche URL für das Instagram-Reels-Container-System bereitzustellen, und löscht die Videos nach erfolgreicher Veröffentlichung wieder.
+- **Wasserzeichen-Entfernung:** Lädt TikToks ohne Wasserzeichen über die kostenlose TikWM-API herunter.
+- **Instagram Reels via instagrapi:** Direkter lokaler Upload der Videodatei unter Verwendung eines zuvor generierten Session-Strings (keine Registrierung als Facebook-Entwickler nötig!).
+- **Frühwarn-System:** Läuft die Instagram-Sitzung ab, beendet sich das Skript absichtlich mit `sys.exit(1)`. Der GitHub Actions Workflow schlägt fehl, und du erhältst sofort eine E-Mail-Benachrichtigung von GitHub, um die Session zu erneuern.
 - **YouTube Shorts Integration:** Direkt-Upload via YouTube Data API v3 und OAuth2 Refresh Token (läuft dauerhaft ohne manuelle Re-Authentifizierung).
-- **Zustandsloses Design (Stateless):** Komplett kompatibel mit GitHub Actions, da keine lokalen Dateizustände benötigt werden.
-- **Robustes Error-Handling:** Fehler auf einer Plattform (z. B. Instagram) blockieren nicht den Upload auf anderen Plattformen (z. B. YouTube).
+- **Zustandsloses Design (Stateless):** Komplett kompatibel mit GitHub Actions, da keine lokalen Dateizustände auf GitHub persistiert werden müssen.
 
 ---
 
@@ -29,33 +31,28 @@ Ein vollautomatisches, produktionsbereites und modulares Python-Skript, das Kurz
                              ▼
                  ┌──────────────────────┐
                  │       main.py        │
-                 └───────┬───┬───┬──────┘
-                         │   │   │
-        ┌────────────────┘   │   └────────────────┐
-        │ DB-Duplikats-      │   │ Temporärer     │
-        │ Check & Insert     │   │ Video-Upload   │
-        ▼                    │   ▼                ▼
-┌──────────────┐             │ ┌──────────────┐ ┌──────────────┐
-│   Supabase   │             │ │   Supabase   │ │ YouTube API  │
-│  PostgreSQL  │             │ │   Storage    │ │  (v3 Shorts) │
-└──────────────┘             │ └──────┬───────┘ └──────┬───────┘
-                             │        │ (Public URL)   │
-                             ▼        ▼                │
-                       ┌────────────────┐              │
-                       │ Instagram Graph│              │
-                       │   Reels API    │              │
-                       └────────┬───────┘              │
-                                │                      │
-                                ▼                      ▼
-                        ┌──────────────┐       ┌──────────────┐
-                        │  Instagram   │       │   YouTube    │
-                        │    Reels     │       │    Shorts    │
-                        └──────────────┘       └──────────────┘
+                 └───────┬──────┬───────┘
+                         │      │
+        ┌────────────────┘      └────────────────┐
+        │ DB-Duplikats-                          │
+        │ Check & Insert                         │
+        ▼                                        ▼
+┌──────────────┐                         ┌──────────────┐
+│   Supabase   │                         │ YouTube API  │
+│  PostgreSQL  │                         │  (v3 Shorts) │
+└──────────────┘                         └──────┬───────┘
+                                                │
+                             ┌──────────────────┴──────────┐
+                             ▼                             ▼
+                      ┌──────────────┐             ┌──────────────┐
+                      │  Instagram   │             │   YouTube    │
+                      │    Reels     │             │    Shorts    │
+                      └──────────────┘             └──────────────┘
 ```
 
 ---
 
-## 🛠️ Voraussetzungen & Setup
+## 🛠️ Setup-Anleitung
 
 ### 1. Supabase einrichten (Kostenlos)
 
@@ -71,52 +68,45 @@ CREATE TABLE processed_videos (
 );
 ```
 
-4. Erstelle unter **Storage** einen neuen Bucket namens `videos`.
-   - **WICHTIG:** Stelle den Bucket auf **Public** (Öffentlich), damit die Instagram Graph API temporär Lesezugriff auf das Video hat.
-   - Setze ggf. die RLS-Policies (Row Level Security) für den Bucket so, dass Uploads (`INSERT`) und Deletions (`DELETE`) für authentifizierte/anonyme Nutzer möglich sind (je nachdem, welchen API-Schlüssel du verwendest).
+---
+
+### 2. Instagram Session generieren (Einmalig lokal)
+
+Um das Risiko von Sperrungen zu minimieren und 2FA zu unterstützen, loggst du dich einmalig lokal auf deinem Mac ein und exportierst die Session:
+
+1. Installiere die Abhängigkeiten lokal:
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. Starte das Session-Generator-Skript:
+   ```bash
+   python generate_ig_session.py
+   ```
+3. Gib deinen Instagram-Benutzernamen und dein Passwort ein.
+4. Falls 2FA aktiv ist, fordert dich das Skript zur Eingabe des 2FA-Codes auf.
+5. Kopiere den gesamten ausgegebenen JSON-String. Dieser String enthält die verschlüsselten Cookies und Geräte-IDs und wird als GitHub Secret hinterlegt.
 
 ---
 
-### 2. API-Zugänge einrichten
+### 3. YouTube Shorts API einrichten (Google Cloud)
 
-#### A. YouTube Shorts API (Google Cloud)
 1. Erstelle ein Projekt in der [Google Cloud Console](https://console.cloud.google.com/).
 2. Aktiviere die **YouTube Data API v3** für dieses Projekt.
 3. Konfiguriere den **OAuth-Zustimmungsbildschirm** (Typ: Extern, füge deine E-Mail hinzu und setze den Status auf "Testen").
 4. Erstelle unter **Vorab-Zugangsdaten (Credentials)** eine **OAuth-Client-ID** (Anwendungstyp: *Webanwendung* oder *Desktop-App*).
-5. Lade die Client-ID und das Client-Secret herunter.
-6. Generiere einen **Refresh Token**. Hierfür kannst du Tools wie das offizielle Google OAuth2 Playground verwenden oder lokal ein kleines Python-Skript laufen lassen, um den Autorisierungscode gegen den Refresh Token einzutauschen. 
+5. Nutze ein OAuth2-Tauschskript (wie die Datei `py.py` in deinem Workspace), um den Autorisierungscode gegen einen permanenten **Refresh Token** einzutauschen.
    - *Benötigter Scope:* `https://www.googleapis.com/auth/youtube.upload`
-
-#### B. Instagram Reels API (Meta for Developers)
-1. Registriere dich als Meta Developer auf [Meta for Developers](https://developers.facebook.com/).
-2. Erstelle eine App (Typ: Business).
-3. Verknüpfe deine Instagram Business-Seite mit einer Facebook-Seite.
-4. Generiere im **Graph API Explorer** einen User Access Token mit den Rechten:
-   - `instagram_basic`
-   - `instagram_content_publish`
-   - `pages_show_list`
-   - `pages_read_engagement`
-5. Tausche diesen kurzlebigen Token in einen **langlebigen Token** (60 Tage oder zeitlich unbegrenzt) um.
-6. Hole die **Instagram Business Account ID** über eine Graph-API-Abfrage oder die Facebook-Seiten-Einstellungen.
 
 ---
 
 ## 🚀 Lokale Entwicklung
 
-1. Klone das Repository.
-2. Erstelle eine virtuelle Umgebung und installiere die Abhängigkeiten:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # Unter Windows: venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
-3. Kopiere die Datei `.env.example` zu `.env`:
+1. Kopiere die Datei `.env.example` zu `.env`:
    ```bash
    cp .env.example .env
    ```
-4. Befülle die `.env` mit deinen API-Zugangsdaten.
-5. Starte das Skript manuell:
+2. Befülle die `.env` mit deinen API-Zugangsdaten und dem generierten `INSTAGRAM_SESSION`-String.
+3. Starte das Skript manuell zum Testen:
    ```bash
    python main.py
    ```
@@ -125,21 +115,23 @@ CREATE TABLE processed_videos (
 
 ## ⚙️ GitHub Actions CI/CD einrichten
 
-Um den automatischen Cronjob zu aktivieren, musst du den Code in dein GitHub-Repository pushen und die Umgebungsvariablen als **Repository Secrets** hinterlegen:
-
-1. Gehe in deinem GitHub-Repository auf **Settings > Secrets and variables > Actions**.
-2. Erstelle über die Schaltfläche **New repository secret** folgende Secrets:
+Pushe den Code in dein GitHub-Repository und hinterlege die Umgebungsvariablen als **Repository Secrets** unter **Settings > Secrets and variables > Actions**:
 
 | Secret Name | Beschreibung | Beispiel |
 | :--- | :--- | :--- |
 | `TIKTOK_USERNAME` | TikTok-Benutzername (ohne `@`) | `muster_creator` |
 | `SUPABASE_URL` | Die URL deines Supabase-Projekts | `https://xxxx.supabase.co` |
-| `SUPABASE_KEY` | Supabase API-Key (Service Role Key empfohlen für Write-Rechte) | `eyJhbGciOi...` |
-| `SUPABASE_BUCKET_NAME` | Name deines öffentlichen Storage-Buckets | `videos` |
+| `SUPABASE_KEY` | Supabase API-Key (Service Role Key empfohlen) | `eyJhbGciOi...` |
 | `YOUTUBE_CLIENT_ID` | Google OAuth2 Client ID | `12345-abcde.apps.googleusercontent.com` |
 | `YOUTUBE_CLIENT_SECRET` | Google OAuth2 Client Secret | `GOCSPX-xxxxxx` |
 | `YOUTUBE_REFRESH_TOKEN`| YouTube API OAuth2 Refresh Token | `1//0xxxxxx` |
-| `INSTAGRAM_BUSINESS_ACCOUNT_ID` | Instagram Business Account ID | `178414xxxxxx` |
-| `INSTAGRAM_ACCESS_TOKEN` | Langlebiger Meta Graph API Access Token | `EAAGxxxxx` |
+| `INSTAGRAM_SESSION` | JSON-Session-String aus dem Generator-Skript | `{"cookie": "...", ...}` |
 
-Das GitHub Actions Skript (`.github/workflows/cross_poster.yml`) führt den Workflow ab sofort **alle 30 Minuten** aus. Du kannst den Lauf auch manuell im GitHub Tab **Actions** starten.
+Das GitHub Actions Skript (`.github/workflows/cross_poster.yml`) führt den Workflow ab sofort **alle 30 Minuten** aus.
+
+### 🔔 Frühwarn-System / Session-Ablauf
+Wenn deine Instagram-Sitzung abläuft, schlägt der GitHub Action Job fehl. GitHub sendet dir daraufhin automatisch eine E-Mail ("Run failed: TikTok Cross-Poster Automation"). 
+Sobald dies geschieht, musst du lediglich:
+1. `python generate_ig_session.py` lokal ausführen, um eine neue Session zu generieren.
+2. Das Secret `INSTAGRAM_SESSION` in deinen GitHub Repository-Einstellungen mit dem neuen String aktualisieren.
+3. Der Cronjob läuft danach wieder reibungslos weiter.
